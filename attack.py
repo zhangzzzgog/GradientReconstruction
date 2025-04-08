@@ -12,7 +12,6 @@ from datasets import load_dataset
 from utils import GumbelSoftmax, get_matrices_expansions, get_embeddings
 from functional import get_top_in_span,adaptive_sigmoid_probs,reverse_text_embeddings
 torch.manual_seed(50)
-torch.autograd.set_detect_anomaly(True)
 
 device = "cpu"
 if torch.cuda.is_available():
@@ -124,7 +123,7 @@ gumbels = [GumbelSoftmax() for _ in range(sample_len)]
 Us = [nn.Parameter(torch.randn(1, 50257).uniform_(-0.5, 0.5)) for _ in range(sample_len)]
 # Us = torch.nn.Embedding(num_embeddings=sample_len, embedding_dim=50257)
 # Us = [torch.nn.Embedding(num_embeddings=50257, embedding_dim=1).to(device) for _ in range(sample_len)]
-
+print(Us[0].data)
 
 
 for i,m in net.named_parameters():
@@ -156,14 +155,15 @@ criterion = onehot_criterion
 ######### honest partipant #########
 # compute original gradient 
 out = net(**sample)
-logits = torch.tensor([adaptive_sigmoid_probs(logit).item() for logit in out.logits.squeeze(0)])
+logits =[adaptive_sigmoid_probs(logit) for logit in out.logits.squeeze(0)]
+logits = torch.stack(logits, dim=0)
 orig_loss = criterion(logits, label_to_onehot(sample["labels"]))
 dy_dx = torch.autograd.grad(orig_loss, net.parameters(), create_graph=True, allow_unused=True)
 
 
 # share the gradients with other clients
 original_dy_dx = list((_.detach().clone() for _ in dy_dx if _ is not None))
-
+    
 dummy_text = "Any Dummy Text To Be Replaced initially" 
 dummy_sample = text_to_input(dummy_text)
 
@@ -177,52 +177,61 @@ def onehot_to_label(onehot):
     _, label = onehot.max(dim=1)
     return label
 
-    
-optimizer = torch.optim.LBFGS(Us,lr=1e-5)
+ 
+# optimizer = torch.optim.LBFGS(Us,lr=1e-2)
+optimizer = torch.optim.AdamW(Us,lr=1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
 
+_, R_Qs = get_matrices_expansions(original_dy_dx)
+# pos_probs = []
+# with torch.no_grad():
+# for pos in range(sample_len):
+#         emb = get_embeddings(net, pos)
+#         probs = get_top_in_span(R_Qs[0], emb, 0.005,'l2')
+#         pos_probs.append(probs)
 
 history = []
 for iters in range(300):
     def closure():
-        global dummy_ids, dummy_label
-        dummy_logits = torch.zeros_like(dummy_label).to(device)
+        global dummy_label, dummy_ids
         optimizer.zero_grad()  
-        cand_dict = {i: [] for i in range(sample_len)}
-        pred = net(input_ids=dummy_ids, labels=dummy_ids)
-        _, R_Qs = get_matrices_expansions(original_dy_dx)
+        dummy_logits = torch.zeros_like(dummy_label).to(device)
         for pos in range(sample_len):
             emb = get_embeddings(net, pos)
             probs = get_top_in_span(R_Qs[0], emb, 0.005,'l2')
+            # gumbel_probs = gumbels[pos](pos_probs[pos],Us[pos],hard=False)
             gumbel_probs = gumbels[pos](probs,Us[pos],hard=False)
             dummy_logits[pos]= gumbel_probs
-        loss = criterion(dummy_label, dummy_logits) 
+        
+        loss = criterion(dummy_logits,dummy_label) 
         dummy_dy_dx = torch.autograd.grad(loss, net.parameters(), create_graph=True,allow_unused=True)
         dummy_dy_dx = (_ for _ in dummy_dy_dx if _ is not None)
-
         grad_diff = 0
         grad_count = 0
         for gx, gy in zip(dummy_dy_dx, original_dy_dx): # TODO: fix the variablas here
             grad_diff += ((gx - gy) ** 2).sum()
             grad_count += gx.nelement()
-
+        
+        dummy_ids = torch.argmax(dummy_logits.detach(), dim=-1).unsqueeze(0)
+        dummy_label = label_to_onehot(dummy_ids)
         grad_diff.backward()
-        dummy_ids = torch.argmax(dummy_logits, dim=-1)
-        dummy_label = torch.tensor([gumbel(dummy_logits[i],Us[i],hard=True) for i,gumbel in enumerate(gumbels)])
         return grad_diff
-        # perplex = calculate_perplexity(math.log(pred.logits))
-        # loss = grad_diff + perplex
-        # loss.backward()
-        # return loss
-    
-    optimizer.step(closure)
-    # current_loss = closure()
-    # print(iters, "%.4f" % current_loss.item())
-    # print("dummy_text:",dummy_text)
-    # print("Gumbles change:",Us[0].weight.grad)
-    dummy_text = tokenizer.decode(dummy_ids[0])
 
-    if iters % 1 == 0: 
-        current_loss = closure()
-        print(iters, "%.4f" % current_loss.item())
-        print("dummy_text:",dummy_text)
-        print(f"[Iter {iters}] Grad Norm for U[{1}]:", None if Us[1].grad is None else Us[1].grad.norm().item())
+    # optimizer.step(closure)
+    current_loss = closure()
+    optimizer.step()
+    scheduler.step()
+    print(iters, "%.4f" % current_loss.item())
+    dummy_text = tokenizer.decode(dummy_ids[0])
+    print("dummy_text:",dummy_text)
+    print(f"[Iter {iters}] Grad Norm for U[{0}]:", None if Us[0].grad is None else Us[0].grad.norm().item())
+    print(Us[0].data)
+    # if iters % 5 == 2: 
+    #     current_loss = closure()
+    #     print(iters, "%.4f" % current_loss.item())
+    #     dummy_text = tokenizer.decode(dummy_ids[0])
+    #     print("dummy_text:",dummy_text)
+    #     print(f"[Iter {iters}] Grad Norm for U[{0}]:", None if Us[0].grad is None else Us[0].grad.norm().item())
+    #     print(Us[0].data)
+
+

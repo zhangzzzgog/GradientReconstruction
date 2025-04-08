@@ -45,15 +45,14 @@ class GumbelSoftmax(nn.Module):
     def forward(self, logits, U_weight, hard=False):
         # logits: (1, vocab_size)
         # U_weight: (vocab_size, 1) or (1, vocab_size)
-        gumbel_noise = self.sample_gumbel(logits.shape).to(logits.device)
+        # gumbel_noise = self.sample_gumbel(logits.shape).to(logits.device)
         if isinstance(U_weight, nn.Embedding):
-            y = logits + U_weight.weight.T + gumbel_noise  # 关键改动：Us.weight 直接参与加法
+            y = logits + U_weight.weight.T   # 关键改动：Us.weight 直接参与加法
         else:
-            y = logits + U_weight + gumbel_noise
-        
-        y = torch.clamp(y, min=-0.5, max=0.5) 
+            y = logits + U_weight 
+        # y = torch.clamp(y, min=-0.5, max=0.5) 
+        # y = y - y.max(dim=-1, keepdim=True)[0]
         y = F.softmax(y / self.temperature, dim=-1)
-
         if hard:
             index = y.max(dim=-1, keepdim=True)[1]
             y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)

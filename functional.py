@@ -86,7 +86,7 @@ def get_perplexity(gpt2, x_embeds, bert_embeddings_weight, gpt2_embeddings_weigh
 
 
 def check_if_in_span(R_K_norm, v, norm='l2'):
-    v /= v.pow(2).sum(-1,keepdim=True).sqrt()
+    v = v / v.pow(2).sum(-1,keepdim=True).sqrt()
     proj = torch.einsum('ik,ij,...j->...k', R_K_norm, R_K_norm, v ) 
     out_of_span = proj - v
     if norm == 'l2':
@@ -143,13 +143,14 @@ def sigmoid_inverse_probs(distances, gamma=5.0):
 def adaptive_sigmoid_probs(distances, min_gamma=5.0, max_gamma=50.0):
     """
     根据距离分布自动调整gamma值
+    :param distances: [vocab_size] 距离张量（越小越可能）
     """
+    # assert distances.dim() == 1, "distances should be a 1D tensor"
     # 计算距离分布的偏态系数
     skewness = torch.mean((distances - distances.mean())**3) / (distances.std()**3 + 1e-8)
     
     # 动态gamma：分布越集中，gamma越大
-    gamma = min_gamma + (max_gamma - min_gamma) * torch.sigmoid(torch.tensor(-skewness))
-    
+    gamma = min_gamma + (max_gamma - min_gamma) * torch.sigmoid(-skewness.clone().detach())    
     return sigmoid_inverse_probs(distances, gamma=gamma.item())
 
 def normalize_each_row_in_a_torch_matrix(matrix):
