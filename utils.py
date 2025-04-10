@@ -10,34 +10,7 @@ class GumbelSoftmax(nn.Module):
     def __init__(self, vocab_size=50257,temperature=1):
         super(GumbelSoftmax, self).__init__()
         self.temperature = temperature
-        # init = torch.randn(1, vocab_size)
-        # init.uniform_()
-        # self.U = nn.Parameter(init)
 
-    # def sample_gumbel(self, U, eps=1e-20):
-    #     return -torch.log(-torch.log(U + eps) + eps).to(self.device)
-
-    # def gumbel_softmax_sample(self, logits, U):
-    #     # 如果传入的是 nn.Embedding 类型，取出其 weight
-    #     if isinstance(U, nn.Embedding):
-    #         U_tensor = U.weight.T
-    #     else:
-    #         U_tensor = U
-    #     U_tensor = U_tensor.to(logits.device)
-
-    #     gumbel_noise = self.sample_gumbel(U_tensor)
-    #     y = logits + gumbel_noise
-    #     return F.softmax(y / self.temperature, dim=-1)
-
-
-    # def forward(self, logits, U, hard=False):
-    #     self.device = logits.device
-    #     y = self.gumbel_softmax_sample(logits,U)
-    #     if hard:
-    #         _, max_value_indexes = y.data.max(1, keepdim=True)
-    #         y_hard = logits.data.clone().zero_().scatter_(1, max_value_indexes, 1)
-    #         y = Variable(y_hard - y.data) + y      
-    #     return y
     def sample_gumbel(self, shape, eps=1e-20):
         U = torch.rand(shape).clamp(min=eps)
         return -torch.log(-torch.log(U + eps) + eps)
